@@ -1,0 +1,78 @@
+stages:
+  - preparation
+  - build
+  - validate
+  - deploy
+
+variables:
+  AWS_REGION: ${AWS_REGION}
+  IMAGE_NAME: intergration-service
+  ECR_REGISTRY: ${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+  ECS_CLUSTER_NAME: my-ecs-cluster
+  ECS_SERVICE_NAME: my-ecs-service
+
+aws_preparation:
+  stage: preparation
+  when: manual
+  image: registry.gitlab.com/gitlab-org/cloud-deploy/aws-base:latest
+  script:
+    - echo $AWS_ACCESS_KEY_ID > aws_access_key_id
+    - echo $AWS_SECRET_ACCESS_KEY > aws_secret_access_key
+    - aws configure set aws_access_key_id $(cat aws_access_key_id)
+    - aws configure set aws_secret_access_key $(cat aws_secret_access_key)
+    - echo "ECR_CREDENTIAL=$(aws ecr get-login-password)" >> build.env
+  tags:
+    - docker
+  artifacts:
+    reports:
+      dotenv: build.env
+  only:
+    - staging-integration-deploy
+
+build:
+  stage: build
+  image: docker:latest
+  variables:
+    DOCKER_HOST: 'tcp://docker:2375'
+    DOCKER_TLS_CERTDIR: ''
+  services:
+    - docker:dind
+  before_script:
+    - echo "$ECR_CREDENTIAL" | docker login --username AWS --password-stdin $ECR_REGISTRY
+  script:
+    - docker build -t $IMAGE_NAME:$CI_PIPELINE_ID -f DockerfileProd --no-cache .
+    - docker tag $IMAGE_NAME:$CI_PIPELINE_ID $ECR_REGISTRY/$IMAGE_NAME:$CI_PIPELINE_ID
+    - docker tag $ECR_REGISTRY/$IMAGE_NAME:$CI_PIPELINE_ID $ECR_REGISTRY/$IMAGE_NAME:latest
+    - docker push $ECR_REGISTRY/$IMAGE_NAME:$CI_PIPELINE_ID
+    - docker push $ECR_REGISTRY/$IMAGE_NAME:latest
+  when: manual
+  tags:
+    - docker
+  dependencies:
+    - aws_preparation
+  only:
+    - staging-integration-deploy
+
+task-validate:
+  stage: validate
+  when: manual
+  needs: []
+  image: registry.gitlab.com/gitlab-org/cloud-deploy/aws-base:latest
+  only:
+    - staging-integration-deploy
+  script:
+    - aws cloudformation validate-template --template-body file://10-task-integration-service.yaml
+  tags:
+    - docker
+
+integration-service deploy:
+  stage: deploy
+  when: manual
+  needs: ['task-validate', 'build']
+  image: registry.gitlab.com/gitlab-org/cloud-deploy/aws-base:latest
+  only:
+    - staging-integration-deploy
+  tags:
+    - docker
+  script:
+    - aws cloudformation deploy --stack-name $STAGING_STACK_NAME --template-file ./10-task-integration-service.yaml --parameter-overrides  ImageUrl=$ECR_REGISTRY/$IMAGE_NAME:$CI_PIPELINE_ID AWSAccessKeyID=$AWSAccessKeyID AWSSecretAccessKey=$AWSSecretAccessKey JWTSecret=$JWTSecret MongoDBUser=$MongoDBUser MongoDBPass=$MongoDBPass SwaggerBasicAuthPass=$SwaggerBasicAuthPass

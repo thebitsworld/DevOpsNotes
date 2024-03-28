@@ -1,0 +1,27 @@
+image: registry.gitlab.com/gitlab-org/cloud-deploy/aws-base:latest
+
+stages:
+  - validate
+  - deploy
+
+Infra-validate:
+  stage: validate
+  when: manual
+  needs: []
+  only:
+    - staging
+  script:
+    - aws cloudformation validate-template --template-body file://01-infrastructure.yaml
+  tags:
+    - docker
+
+Infra-deploy: 
+  stage: deploy
+  when: manual
+  needs: ["Infra-validate"]
+  only:
+    - staging
+  tags:
+    - docker
+  script:
+    - aws --region $AWS_REGION_01 cloudformation deploy --stack-name $INFRA_STACK_NAME_STAGING --capabilities CAPABILITY_NAMED_IAM --template-file ./01-infrastructure.yaml 

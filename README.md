@@ -1,0 +1,1 @@
+This repo containt my notes when working as DevOps

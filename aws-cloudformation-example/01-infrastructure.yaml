@@ -1,0 +1,627 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Infrastruture Staging Env
+Parameters:
+  # Certificate for Cloudfront is manually created with AWS Certificate Management service
+  # in us-east-1 (N. Virginia) for template flexible purpose.
+  # To create Cerficate with Cloudformation, reference this guide:
+  # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-certificatemanager-certificate.html
+  CFSSLCert:
+    Type: String
+    Description: Cloudfront SSL Certificate
+    Default: arn:aws:acm:eu-west-3:xxxx:certificate/xxxxxx-xxxx-xxxx-xxxx
+  LBSSLCert:
+    Type: String
+    Description: Load Balancer SSL Certificate
+    Default: arn:aws:acm:eu-west-3:xxxx:certificate/xxxxxx-xxxx-xxxx-xxxx
+    Type: String
+    Description: IP range for VPC
+    Default: "172.16.0.0/16"
+  PublicSubnets:
+    Type: CommaDelimitedList
+    Description: Public Subnets list
+    Default: "172.16.0.0/20, 172.16.16.0/20, 172.16.32.0/20"
+  PrivateSubnets:
+    Type: CommaDelimitedList
+    Description: Private Subnets list
+    Default: "172.16.128.0/20, 172.16.144.0/20, 172.16.160.0/20"
+  AvaibilityZone01:
+    Type: String
+    Description: First AvaibilityZone
+    Default: "eu-west-3a"
+  AvaibilityZone02:
+    Type: String
+    Description: Second AvaibilityZone
+    Default: "eu-west-3b"
+  AvaibilityZone03:
+    Type: String
+    Description: Third AvaibilityZone
+    Default: "eu-west-3c"
+  # S3 & CloudFront
+  S3StaticWeb:
+    Type: String
+    Description: StaticWeb
+    Default: "staging-static-web"
+  CloudFrontStaticWebDomain:
+    Type: String
+    Description: Cloudfront for static-web
+    Default: "static-web.thebitsworld.com"
+  RedisServerSpec:
+    Type: String
+    Description: Specify the specs of Redis (Node type like cache.t3.xlarge) 
+    Default: "cache.t3.micro"
+  ECSClusterName:
+    Type: String
+    Description: Name of ECS Cluster 
+    Default: "staging-thebitsworld"    
+
+Resources:
+######################### NETWORKING SETUP #########################
+  # Create a custom VPC
+  VPC:
+    Type: "AWS::EC2::VPC"
+    Properties:
+      CidrBlock: !Ref VPCCDR
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: ProjectVPC
+
+  # Create Private and Public subnets:
+  # We use 3 subnets each for Public and Private
+  # Each subnet for an AvaibilityZone in a Region
+
+  # Public subnets
+  PublicSubnet01:
+    Type: "AWS::EC2::Subnet"
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Select [ 0, !Ref PublicSubnets ] 
+      AvailabilityZone: !Ref AvaibilityZone01
+      MapPublicIpOnLaunch: true
+      PrivateDnsNameOptionsOnLaunch:
+        EnableResourceNameDnsARecord: true
+        HostnameType: ip-name
+      Tags:
+        - Key: Name
+          Value: ProjectPublicSubnet01
+
+  PublicSubnet02:
+    Type: "AWS::EC2::Subnet"
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Select [ 1, !Ref PublicSubnets ] 
+      AvailabilityZone: !Ref AvaibilityZone02
+      MapPublicIpOnLaunch: true
+      PrivateDnsNameOptionsOnLaunch:
+        EnableResourceNameDnsARecord: true
+        HostnameType: ip-name
+      Tags:
+        - Key: Name
+          Value: ProjectPublicSubnet02
+
+  PublicSubnet03:
+    Type: "AWS::EC2::Subnet"
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Select [ 2, !Ref PublicSubnets ] 
+      AvailabilityZone: !Ref AvaibilityZone03
+      MapPublicIpOnLaunch: true
+      PrivateDnsNameOptionsOnLaunch:
+        EnableResourceNameDnsARecord: true
+        HostnameType: ip-name
+      Tags:
+        - Key: Name
+          Value: ProjectPublicSubnet03
+
+  # Private subnets
+  PrivateSubnet01:
+    Type: "AWS::EC2::Subnet"
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Select [ 0, !Ref PrivateSubnets ] 
+      AvailabilityZone: !Ref AvaibilityZone01
+      Tags:
+        - Key: Name
+          Value: ProjectPrivateSubnet01
+
+  PrivateSubnet02:
+    Type: "AWS::EC2::Subnet"
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Select [ 1, !Ref PrivateSubnets ]
+      AvailabilityZone: !Ref AvaibilityZone02
+      Tags:
+        - Key: Name
+          Value: ProjectPrivateSubnet02
+
+  PrivateSubnet03:
+    Type: "AWS::EC2::Subnet"
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Select [ 2, !Ref PrivateSubnets ]
+      AvailabilityZone: !Ref AvaibilityZone03
+      Tags:
+        - Key: Name
+          Value: ProjectPrivateSubnet03
+
+  # Other networking resource for Public subnet
+  # - Internet Gateway
+  # - Routing table
+  # - Routing rules
+
+  # Internet Gateway        
+  InternetGateway:
+    Type: "AWS::EC2::InternetGateway"
+    Properties:
+      Tags:
+        - Key: Name
+          Value: ProjectIG
+  GatewayAttachement:
+    Type: "AWS::EC2::VPCGatewayAttachment"
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  # Route table 
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref 'VPC'
+      Tags:
+        - Key: Name
+          Value: ProjectPublicRouteTable
+
+  # Routing rules
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachement
+    Properties:
+      RouteTableId: !Ref 'PublicRouteTable'
+      DestinationCidrBlock: '0.0.0.0/0'
+      GatewayId: !Ref 'InternetGateway'
+
+  # Association route table to each public subnet
+  PublicSubnet01RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet01
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet02RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet02
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet03RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet03
+      RouteTableId: !Ref PublicRouteTable
+
+  # Other networking resource for Private subnet
+  # - NAT Gateway
+  # - Routing table
+  # - Routing rules
+
+  # Public IP for NAT Gateway
+  NatGatewayAttachment:
+    Type: AWS::EC2::EIP
+    DependsOn: GatewayAttachement
+    Properties:
+        Domain: vpc
+  
+  # NAT Gateway
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGatewayAttachment.AllocationId
+      SubnetId: !Ref PublicSubnet01
+
+  # Private route table, routing rule and add route table to each private subnet
+  PrivateRouteTable01:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref 'VPC'
+  PrivateRoute01:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable01
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+  PrivateRouteTable01Association:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable01
+      SubnetId: !Ref PrivateSubnet01
+
+  PrivateRouteTable02:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref 'VPC'
+  PrivateRoute02:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable02
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+  PrivateRouteTable02Association:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable02
+      SubnetId: !Ref PrivateSubnet02
+
+  PrivateRouteTable03:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref 'VPC'
+  PrivateRoute03:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable03
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+  PrivateRouteTable03Association: 
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable03
+      SubnetId: !Ref PrivateSubnet03
+
+######################### S3 & CLOUFRONT FOR STATIC WEB #########################
+  
+  ############### RatRace ###############
+  S3StaticWebBucket:
+    Type: AWS::S3::Bucket
+    Properties: 
+      BucketName: !Ref S3
+      VersioningConfiguration:
+        Status: Enabled      
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: False
+        BlockPublicPolicy: False
+        IgnorePublicAcls: False
+        RestrictPublicBuckets: False
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerPreferred
+
+  # S3 Policy that allow cloudfront access to S3
+  # S3 Versioning and Encryption enabled
+  S3StaticWebBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref S3StaticWebBucket
+      PolicyDocument:
+        Statement:
+        - Action: s3:GetObject
+          Effect: Allow
+          Resource: !Sub ${S3StaticWebBucket.Arn}/*
+          Principal:
+            Service: cloudfront.amazonaws.com
+          Condition:
+            StringEquals:
+              AWS:SourceArn: !Sub arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontStaticWeb}
+
+  # Cloudfront Access control, used to establish connect to S3, together with S3 Policy will grant access to S3 files
+  CloudFrontStaticWebOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties: 
+      OriginAccessControlConfig: 
+          Description: the origin access control for cloudfront
+          Name: CloudFrontStaticWebOAC
+          OriginAccessControlOriginType: s3
+          SigningBehavior: always
+          SigningProtocol: sigv4
+
+  # Cloudfront StaticWeb
+  CloudFrontStaticWeb:
+    Type: "AWS::CloudFront::Distribution"
+    Properties:
+      DistributionConfig:
+        Comment: CloudFront For StaticWeb
+        Aliases:
+          - !Ref CloudFrontStaticWebDomain
+        DefaultCacheBehavior:
+          AllowedMethods:
+            - GET
+            - HEAD
+          CachedMethods:
+            - GET
+            - HEAD
+          TargetOriginId: S3StaticWebBucket
+          ForwardedValues:
+            QueryString: false
+            Cookies:
+              Forward: none
+          ViewerProtocolPolicy: redirect-to-https
+        DefaultRootObject: index.html
+        Enabled: true
+        Origins:
+          - Id: S3StaticWebBucket
+            DomainName: !GetAtt S3StaticWebBucket.DomainName
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+            OriginAccessControlId: !GetAtt CloudFrontStaticWebOAC.Id
+        ViewerCertificate:
+          AcmCertificateArn: !Ref CFSSLCert
+          MinimumProtocolVersion: TLSv1.1_2016
+          SslSupportMethod: sni-only
+
+######################### REDIS CACHE #########################
+  # Redis cache exist in current env so wont deploy new
+  RedisSubnetGroup:
+    Type: AWS::ElastiCache::SubnetGroup
+    Properties:
+      CacheSubnetGroupName: exmaple-redis-subnets
+      Description: Subnet group for Redis
+      SubnetIds:
+        - !Ref PublicSubnet01
+        - !Ref PublicSubnet02
+        - !Ref PublicSubnet03
+  
+  EC2SecurityGroupForRedis:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Redis in EC2 Security Group
+      VpcId: !Ref 'VPC'
+  EC2SecurityGroupIngressForRedis:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Ingress from VPC
+      GroupId: !Ref 'EC2SecurityGroupForRedis'
+      IpProtocol: -1
+      SourceSecurityGroupId: !Ref 'FargateContainerSecurityGroup'
+
+  RedisCacheCluster:
+    Type: AWS::ElastiCache::ReplicationGroup
+    Properties:
+      CacheNodeType: !Ref RedisServerSpec
+      CacheSubnetGroupName: !Ref RedisSubnetGroup
+      ReplicationGroupDescription: wildventure-redis
+      ClusterMode: disabled
+      AutomaticFailoverEnabled: false
+      AutoMinorVersionUpgrade: false
+      Engine: Redis
+      EngineVersion: '7.1'
+      MultiAZEnabled: false
+      NetworkType: ipv4
+      Port: 6379
+      ReplicasPerNodeGroup: 0
+      SecurityGroupIds:
+        - !Ref EC2SecurityGroupForRedis
+
+######################### ECS CLUSTER #########################
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      CapacityProviders:
+        - FARGATE
+        - FARGATE_SPOT
+      ClusterName: !Ref ECSClusterName
+      ClusterSettings:
+        - Name: containerInsights
+          Value: disabled
+      Tags:
+        - Key: Name
+          Value: !Ref ECSClusterName
+          
+  ECSRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [ecs.amazonaws.com]
+          Action: ['sts:AssumeRole']
+      Path: /
+      Policies:
+      - PolicyName: ecs-service
+        PolicyDocument:
+          Statement:
+          - Effect: Allow
+            Action:
+              # Rules which allow ECS to attach network interfaces to instances
+              # on your behalf in order for awsvpc networking mode to work right
+              - 'ec2:AttachNetworkInterface'
+              - 'ec2:CreateNetworkInterface'
+              - 'ec2:CreateNetworkInterfacePermission'
+              - 'ec2:DeleteNetworkInterface'
+              - 'ec2:DeleteNetworkInterfacePermission'
+              - 'ec2:Describe*'
+              - 'ec2:DetachNetworkInterface'
+
+              # Rules which allow ECS to update load balancers on your behalf
+              # with the information sabout how to send traffic to your containers
+              - 'elasticloadbalancing:DeregisterInstancesFromLoadBalancer'
+              - 'elasticloadbalancing:DeregisterTargets'
+              - 'elasticloadbalancing:Describe*'
+              - 'elasticloadbalancing:RegisterInstancesWithLoadBalancer'
+              - 'elasticloadbalancing:RegisterTargets'
+            Resource: '*'
+
+  # This is a role which is used by the ECS tasks themselves.
+  ECSTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [ecs-tasks.amazonaws.com]
+          Action: ['sts:AssumeRole']
+      Path: /
+      Policies:
+        - PolicyName: AmazonECSTaskExecutionRolePolicy
+          PolicyDocument:
+            Statement:
+            - Effect: Allow
+              Action:
+                # Allow the ECS Tasks to download images from ECR
+                - 'ecr:GetAuthorizationToken'
+                - 'ecr:BatchCheckLayerAvailability'
+                - 'ecr:GetDownloadUrlForLayer'
+                - 'ecr:BatchGetImage'
+
+                # Allow the ECS tasks to upload logs to CloudWatch
+                - 'logs:CreateLogStream'
+                - 'logs:PutLogEvents'
+              Resource: '*'
+
+  # ECS security groups
+  FargateContainerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Access to the Fargate containers
+      VpcId: !Ref 'VPC'
+  EcsSecurityGroupIngressFromPublicALB:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Ingress from the public ALB
+      GroupId: !Ref 'FargateContainerSecurityGroup'
+      IpProtocol: -1
+      SourceSecurityGroupId: !Ref 'PublicLoadBalancerSG'
+  EcsSecurityGroupIngressFromSelf:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Ingress from other containers in the same security group
+      GroupId: !Ref 'FargateContainerSecurityGroup'
+      IpProtocol: -1
+      SourceSecurityGroupId: !Ref 'FargateContainerSecurityGroup'
+
+  # Load Balancer:
+  PublicLoadBalancerSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Access to the public facing load balancer
+      VpcId: !Ref 'VPC'
+      SecurityGroupIngress:
+          # Allow access to ALB from anywhere on the internet
+          - CidrIp: 0.0.0.0/0
+            IpProtocol: -1
+  
+  PublicLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    DependsOn:
+      - GatewayAttachement
+    Properties:
+      Scheme: internet-facing
+      LoadBalancerAttributes:
+      - Key: idle_timeout.timeout_seconds
+        Value: '30'
+      Subnets:
+        # The load balancer is placed into the public subnets, so that traffic
+        # from the internet can reach the load balancer directly via the internet gateway
+        - !Ref PublicSubnet01
+        - !Ref PublicSubnet02
+        - !Ref PublicSubnet03
+      SecurityGroups: [!Ref 'PublicLoadBalancerSG']
+  HTTPlistener:
+    Type: "AWS::ElasticLoadBalancingV2::Listener"
+    DependsOn:
+      - PublicLoadBalancer
+    Properties:
+      DefaultActions:
+        - Type: "redirect"
+          RedirectConfig:
+            Protocol: "HTTPS"
+            Port: 443
+            Host: "#{host}"
+            Path: "/#{path}"
+            Query: "#{query}"
+            StatusCode: "HTTP_301"
+      LoadBalancerArn: !Ref 'PublicLoadBalancer'
+      Port: 80
+      Protocol: "HTTP"
+  HTTPSlistener:
+    Type: "AWS::ElasticLoadBalancingV2::Listener"
+    DependsOn:
+      - PublicLoadBalancer
+    Properties:
+      DefaultActions:
+        - Type: "fixed-response"
+          FixedResponseConfig:
+            ContentType: "text/plain"
+            StatusCode: "503"
+      LoadBalancerArn: !Ref 'PublicLoadBalancer'
+      Port: 443
+      Protocol: "HTTPS"
+      Certificates:
+        - CertificateArn: !Ref 'LBSSLCert' 
+
+Outputs:
+  ClusterName:
+    Description: The name of the ECS cluster
+    Value: !Ref 'ECSCluster'
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'ClusterName' ] ]
+  ExternalUrl:
+    Description: The url of the external load balancer
+    Value: !Join ['', ['http://', !GetAtt 'PublicLoadBalancer.DNSName']]
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'ExternalUrl' ] ]
+  ECSRole:
+    Description: The ARN of the ECS role
+    Value: !GetAtt 'ECSRole.Arn'
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'ECSRole' ] ]
+  ECSTaskExecutionRole:
+    Description: The ARN of the ECS role
+    Value: !GetAtt 'ECSTaskExecutionRole.Arn'
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'ECSTaskExecutionRole' ] ]
+  HTTPSlistener:
+    Description: The ARN of the public load balancer's Listener
+    Value: !Ref HTTPSlistener
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'HTTPSlistener' ] ]
+  VPCId:
+    Description: The ID of the VPC that this stack is deployed in
+    Value: !Ref 'VPC'
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'VPCId' ] ]
+  PublicSubnet01:
+    Description: Public subnet one
+    Value: !Ref 'PublicSubnet01'
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'PublicSubnet01' ] ]
+  PublicSubnet02:
+    Description: Public subnet two
+    Value: !Ref 'PublicSubnet02'
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'PublicSubnet02' ] ]
+  PublicSubnet03:
+    Description: Public subnet two
+    Value: !Ref 'PublicSubnet03'
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'PublicSubnet03' ] ]
+  PrivateSubnet01:
+    Description: Private subnet one
+    Value: !Ref 'PrivateSubnet01'
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'PrivateSubnet01' ] ]
+  PrivateSubnet02:
+    Description: Private subnet two
+    Value: !Ref 'PrivateSubnet02'
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'PrivateSubnet02' ] ]
+  PrivateSubnet03:
+    Description: Private subnet two
+    Value: !Ref 'PrivateSubnet03'
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'PrivateSubnet03' ] ]
+  FargateContainerSecurityGroup:
+    Description: A security group used to allow Fargate containers to receive traffic
+    Value: !Ref 'FargateContainerSecurityGroup'
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'FargateContainerSecurityGroup' ] ]
+  RedisCacheClusterPrimaryEndPoint:
+    Description: Redis endpoint
+    Value: !GetAtt RedisCacheCluster.PrimaryEndPoint.Address
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'RedisCacheClusterPrimaryEndPoint' ] ]

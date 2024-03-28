@@ -1,0 +1,262 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Deploy a service on AWS Fargate, hosted in a private subnet, but accessible via a public load balancer.
+Parameters:
+  # need change
+  ParentStackName:
+    Type: String
+    Default: production
+    Description: The name of the parent Fargate networking stack that you created. Necessary
+                 to locate and reference resources created by that stack.
+  # need change
+  ServiceName:
+    Type: String
+    Default: integration-service
+    Description: A name for the service
+  # need change
+  ImageUrl:
+    Type: String
+    Default: "499372309035.dkr.ecr.eu-west-3.amazonaws.com/maze-gaming-integration-service"
+    Description: The url of a docker image that contains the application process that
+                 will handle the traffic for this service
+  # need change
+  ContainerPort:
+    Type: Number
+    Default: 3000
+    Description: What port number the application inside the docker container is binding to
+  ContainerCpu:
+    Type: Number
+    Default: 1024
+    Description: How much CPU to give the container. 1024 is 1 CPU
+  ContainerMemory:
+    Type: Number
+    Default: 3072
+    Description: How much memory in megabytes to give the container
+  # need change
+  Domain:
+    Type: String
+    Default: "integrate-service-test.thebitsworld.com"
+    Description: Domain|Subdomain for service - mapped to ALB CNAME 
+  Priority:
+    Type: Number
+    Default: 10
+    Description: The priority for the routing rule added to the load balancer.
+                 This only applies if your have multiple services which have been
+                 assigned to different paths on the load balancer.
+  DesiredCount:
+    Type: Number
+    Default: 1
+    Description: How many copies of the service task to run
+  # Role:
+  #   Type: String
+  #   Default: "arn:aws:iam::499372309035:role/ecsTaskExecutionRole"
+  #   Description: (Optional) An IAM role to give the service's containers if the code within needs to
+  #                access other AWS resources like S3 buckets, DynamoDB tables, etc
+  
+  ###################### ENV for task ##################
+  AppName:
+    Type: String
+    Default: "Integration Service"
+    Description: App name
+  AWSRegion:
+    Type: String
+    Default: us-east-1
+    Description: AWS region which contain AWS resource for SDK   
+  AppEnv:
+    Type: String
+    Default: production
+    Description: app purpose (dev, test, staging, production...)
+  HTTPEnable:
+    Type: String
+    Default: "false"
+    Description: Enable http for app or not
+  HTTPHost:
+    Type: String
+    Default: "0.0.0.0"
+    Description: IP that App listen on  
+  HTTPPort:
+    Type: String
+    Default: "3000"
+    Description: Port that App listen on     
+  KMSKeyID:
+    Type: String
+    Default: "11bfce54-caf4-4937-b079-f008966db2f6"
+    Description: Key for KMS accessing   
+  LogGroupName:
+    Type: String
+    Default: "integration-service-staging"
+    Description: Name of cloudwatch log group
+  LogStreamGameAPI:
+    Type: String
+    Default: "game-api"
+    Description: Name of cloudwatch log group for game api 
+  LogStreamInternalGameService:
+    Type: String
+    Default: "internal-game-service"
+    Description: Name of cloudwatch log group for game service
+  LogStreamInternalLog:     
+    Type: String
+    Default: "internal-log"
+    Description: Name of cloudwatch log group for internal 
+  LogStreamWalletAPI:
+    Type: String
+    Default: "wallet-api"
+    Description: Name of cloudwatch log group for wallet api
+  MongoDBHostPrimary:
+    Type: String
+    Default: "cloudformation-test.h7tr2sv.mongodb.net"
+    Description: MongoDB Endpoint for read/write 
+  MongoDBPass:
+    Type: String
+    # Default: "Provide pass via command line for security reason"
+    Description: MongoDB password
+  MongoDBUser:
+    Type: String
+    # Default: "Provide pass via command line for security reason"
+    Description: MongoDB username
+  SwaggerBasicAuthPass:
+    Type: String
+    # Default: "Provide pass via command line for security reason"
+    Description: Password for access swagger site 
+
+Resources:
+  # The task definition. This is a simple metadata description of what
+  # container to run, and what resource requirements it has.
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Ref 'ServiceName'
+      Cpu: !Ref 'ContainerCpu'
+      Memory: !Ref 'ContainerMemory'
+      NetworkMode: awsvpc
+      RuntimePlatform:
+        CpuArchitecture: X86_64
+        OperatingSystemFamily: LINUX
+      RequiresCompatibilities:
+        - FARGATE
+      ExecutionRoleArn:
+        Fn::ImportValue:
+          !Join [':', [!Ref 'ParentStackName', 'ECSTaskExecutionRole']]
+      TaskRoleArn:
+        Fn::ImportValue:
+          !Join [':', [!Ref 'ParentStackName', 'ECSTaskExecutionRole']]
+      ContainerDefinitions:
+        - Name: !Ref 'ServiceName'
+          Cpu: !Ref 'ContainerCpu'
+          Memory: !Ref 'ContainerMemory'
+          Image: !Ref 'ImageUrl'
+          PortMappings:
+            - ContainerPort: !Ref 'ContainerPort'
+          Environment:
+            - Name: APP_NAME
+              Value: !Ref AppName
+            - Name: AWS_REGION
+              Value: !Ref AWSRegion
+            - Name: ENV
+              Value: !Ref AppEnv
+            - Name: HTTP_ENABLE
+              Value: !Ref HTTPEnable
+            - Name: HTTP_HOST
+              Value: !Ref HTTPHost
+            - Name: HTTP_PORT
+              Value: !Ref HTTPPort
+              #need changed
+            - Name: KMS_KEY_ID
+              Value: !Ref KMSKeyID
+              #need changed
+            - Name: LOG_GROUP_NAME
+              Value: !Ref LogGroupName
+              #need changed
+            - Name: LOG_STREAM_GAME_API
+              Value: !Ref LogStreamGameAPI
+              #need changed
+            - Name: LOG_STREAM_INTERNAL_GAME_SERVICE
+              Value: !Ref LogStreamInternalGameService
+              #need changed
+            - Name: LOG_STREAM_INTERNAL_LOG
+              Value: !Ref LogStreamInternalLog
+              #need changed
+            - Name: LOG_STREAM_WALLET_API
+              Value: !Ref LogStreamWalletAPI
+              #need changed
+            - Name: MONGO_HOST_PRIMARY
+              Value: !Ref MongoDBHostPrimary
+              #need changed
+            - Name: MONGO_PASS
+              Value: !Ref MongoDBPass
+              #need changed
+            - Name: MONGO_USER
+              Value: !Ref MongoDBUser
+              #need changed
+            - Name: SWAGGER_BASIC_AUTH_PASS
+              Value: !Ref SwaggerBasicAuthPass            
+
+  # The service. The service is a resource which allows you to run multiple
+  # copies of a type of task, and gather up their logs and metrics, as well
+  # as monitor the number of running tasks and replace any that have crashed
+  Service:
+    Type: AWS::ECS::Service
+    DependsOn: LoadBalancerRule
+    Properties:
+      ServiceName: !Ref 'ServiceName'
+      Cluster:
+        Fn::ImportValue:
+          !Join [':', [!Ref 'ParentStackName', 'ClusterName']]
+      LaunchType: FARGATE
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 75
+      DesiredCount: !Ref 'DesiredCount'
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          SecurityGroups:
+            - Fn::ImportValue:
+                !Join [':', [!Ref 'ParentStackName', 'FargateContainerSecurityGroup']]
+          Subnets:
+            - Fn::ImportValue:
+                !Join [':', [!Ref 'ParentStackName', 'PrivateSubnet01']]
+            - Fn::ImportValue:
+                !Join [':', [!Ref 'ParentStackName', 'PrivateSubnet02']]
+            - Fn::ImportValue:
+                !Join [':', [!Ref 'ParentStackName', 'PrivateSubnet03']]
+      TaskDefinition: !Ref 'TaskDefinition'
+      LoadBalancers:
+        - ContainerName: !Ref 'ServiceName'
+          ContainerPort: !Ref 'ContainerPort'
+          TargetGroupArn: !Ref 'TargetGroup'
+
+  # A target group. This is used for keeping track of all the tasks, and
+  # what IP addresses / port numbers they have. You can query it yourself,
+  # to use the addresses yourself, but most often this target group is just
+  # connected to an application load balancer, or network load balancer, so
+  # it can automatically distribute traffic across all the targets.
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 6
+      HealthCheckPath: /api/app/health-check
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      TargetType: ip
+      Name: !Ref 'ServiceName'
+      Port: !Ref 'ContainerPort'
+      Protocol: HTTP
+      UnhealthyThresholdCount: 2
+      VpcId:
+        Fn::ImportValue:
+          !Join [':', [!Ref 'ParentStackName', 'VPCId']]
+
+  # Create a rule on the load balancer for routing traffic to the target group
+  LoadBalancerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Actions:
+        - TargetGroupArn: !Ref 'TargetGroup'
+          Type: 'forward'
+      Conditions:
+        - Field: host-header
+          Values: [!Ref 'Domain']
+      ListenerArn:
+        Fn::ImportValue:
+          !Join [':', [!Ref 'ParentStackName', 'HTTPSlistener']]
+      Priority: !Ref 'Priority'
